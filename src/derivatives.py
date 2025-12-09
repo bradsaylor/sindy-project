@@ -2,47 +2,47 @@
 
 import numpy as np
 import jax.numpy as jnp
+import jax
 
 # ---------- Finite-difference derivative ----------
 
 
+@jax.jit
 def finite_difference_derivative(ts, xs):
     """
-    Simple 2nd-order finite difference derivative.
+    2nd-order finite difference derivative (JAX/JIT friendly).
 
     Parameters
     ----------
-    ts : array_like, shape (n,)
-        Time samples.
-    xs : array_like, shape (n,) or (n, d)
-        State trajectory.
+    ts : jnp.ndarray, shape (n,)
+    xs : jnp.ndarray, shape (n, d)
 
     Returns
     -------
-    Xdot : jnp.ndarray, shape (n,) or (n, d)
-        Estimated time derivative.
+    Xdot : jnp.ndarray, shape (n, d)
     """
-    t = np.asarray(ts, dtype=float).ravel()
-    X = np.asarray(xs, dtype=float)
+    t = jnp.ravel(ts)
+    X = xs
     if X.ndim == 1:
         X = X[:, None]
 
-    n, d = X.shape
-    dt = np.diff(t)
-    dt_mean = float(dt.mean())
+    dt = jnp.diff(t)
+    dt_mean = jnp.mean(dt)
 
-    Xdot = np.empty_like(X)
+    def body(X):
+        n, d = X.shape
+        Xdot = jnp.empty_like(X)
 
-    # interior: central difference
-    Xdot[1:-1, :] = (X[2:, :] - X[:-2, :]) / (2.0 * dt_mean)
+        # central difference for interior
+        Xdot = Xdot.at[1:-1, :].set((X[2:, :] - X[:-2, :]) / (2.0 * dt_mean))
 
-    # endpoints: forward/backward difference
-    Xdot[0, :] = (X[1, :] - X[0, :]) / dt_mean
-    Xdot[-1, :] = (X[-1, :] - X[-2, :]) / dt_mean
+        # endpoints
+        Xdot = Xdot.at[0, :].set((X[1, :] - X[0, :]) / dt_mean)
+        Xdot = Xdot.at[-1, :].set((X[-1, :] - X[-2, :]) / dt_mean)
+        return Xdot
 
-    if xs.ndim == 1:
-        return jnp.asarray(Xdot[:, 0])
-    return jnp.asarray(Xdot)
+    Xdot = body(X)
+    return Xdot.squeeze()  # (n,) if 1D input, else (n,d)
 
 
 # ---------- Savitzky–Golay derivative ----------
@@ -53,54 +53,53 @@ except ImportError:  # pragma: no cover
     savgol_filter = None
 
 
-def sgolay_derivative(ts, xs, window_length=21, polyorder=3):
-    """
-    Savitzky–Golay smoothed derivative.
+import numpy as np
+import jax.numpy as jnp
+from scipy.signal import savgol_filter
 
-    Parameters
-    ----------
-    ts : array_like, shape (n,)
-        Time samples.
-    xs : array_like, shape (n,) or (n, d)
-        State trajectory.
-    window_length : int
-        Length of the filter window (odd).
-    polyorder : int
-        Polynomial order used in local fitting.
 
-    Returns
-    -------
-    Xdot : jnp.ndarray, shape (n,) or (n, d)
-        Estimated time derivative.
+import numpy as np
+import jax.numpy as jnp
+from scipy.signal import savgol_filter
+
+
+def sgolay_derivative(ts, X, window_length=21, polyorder=3):
     """
-    if savgol_filter is None:
-        raise ImportError(
-            "sgolay_derivative requires scipy.signal.savgol_filter. "
-            "Install SciPy or remove this call."
+    Savitzky–Golay derivative with relaxed dt handling.
+
+    Assumes *approximately* uniform sampling; uses the mean dt.
+    """
+    ts_np = np.asarray(ts, dtype=float).ravel()
+    X_np = np.asarray(X, dtype=float)
+
+    if X_np.ndim == 1:
+        X_np = X_np[:, None]
+
+    # Use mean dt and only warn if strongly non-uniform
+    dt_all = np.diff(ts_np)
+    dt_mean = float(dt_all.mean())
+
+    if np.max(np.abs(dt_all - dt_mean)) > 1e-3 * max(1.0, abs(dt_mean)):
+        print(
+            "Warning: sgolay_derivative detected noticeably non-uniform dt; "
+            "using mean dt for delta."
         )
 
-    t = np.asarray(ts, dtype=float).ravel()
-    X = np.asarray(xs, dtype=float)
-    if X.ndim == 1:
-        X = X[:, None]
+    if window_length % 2 == 0:
+        raise ValueError("window_length must be odd.")
 
-    n, d = X.shape
-    dt = float(np.mean(np.diff(t)))
-
-    Xdot = np.empty_like(X)
-    for j in range(d):
+    Xdot = np.zeros_like(X_np)
+    for j in range(X_np.shape[1]):
         Xdot[:, j] = savgol_filter(
-            X[:, j],
+            X_np[:, j],
             window_length=window_length,
             polyorder=polyorder,
             deriv=1,
-            delta=dt,
+            delta=dt_mean,
             mode="interp",
         )
 
-    if xs.ndim == 1:
-        return jnp.asarray(Xdot[:, 0])
-    return jnp.asarray(Xdot)
+    return jnp.asarray(Xdot if Xdot.shape[1] > 1 else Xdot[:, 0])
 
 
 # ---------- TV-regularized derivative (Chartrand / TVRegDiff) ----------
@@ -119,7 +118,7 @@ def _tvregdiff_1d(
     alpha=1e-4,
     n_iters=15,
     eps=1e-6,
-    diffkernel="abs",   # "abs" for TV, "sq" for Tikhonov-like
+    diffkernel="abs",  # "abs" for TV, "sq" for Tikhonov-like
     cgtol=1e-4,
     cgmaxit=200,
 ):

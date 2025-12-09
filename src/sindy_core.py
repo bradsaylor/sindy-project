@@ -310,6 +310,15 @@ class SINDyConfig:
     post_tol: float = 1e-2  # zero coefficients smaller than this for display
     var_names: Sequence[str] = ("x", "y", "z")
 
+    # Fourier options
+    mode: str = (
+        "polynomial"  # 'polynomial', 'fourier', 'polynomial_and_fourier'
+    )
+    k_max: int = 0  # max Fourier harmonic
+    include_sin: bool = True
+    include_cos: bool = True
+    fourier_prefix: str = "t"  # label for time variable in feature names
+
 
 class SINDyModel:
     """
@@ -325,21 +334,79 @@ class SINDyModel:
         self.powers = None
         self.Theta_shape = None
 
-    def fit(self, X, Xdot):
+    def _build_library(self, X, ts=None):
+        X = jnp.asarray(X)
+        mode = getattr(self.config, "mode", "polynomial")
+
+        if mode == "polynomial":
+            Theta, names, powers = build_polynomial_block(
+                X,
+                degree=self.config.poly_degree,
+                include_bias=self.config.include_bias,
+                var_names=self.config.var_names,
+            )
+            return Theta, names, powers
+
+        elif mode == "fourier":
+            if ts is None:
+                raise ValueError("ts must be provided for mode='fourier'.")
+            Theta_four, names_four, _ = build_fourier_block(
+                ts,
+                k_max=self.config.k_max,
+                include_sin=self.config.include_sin,
+                include_cos=self.config.include_cos,
+                prefix=self.config.fourier_prefix,
+            )
+            return Theta_four, names_four, None
+
+        elif mode == "polynomial_and_fourier":
+            if ts is None:
+                raise ValueError(
+                    "ts must be provided for mode='polynomial_and_fourier'"
+                )
+
+            Theta_poly, names_poly, powers = build_polynomial_block(
+                X,
+                degree=self.config.poly_degree,
+                include_bias=self.config.include_bias,
+                var_names=self.config.var_names,
+            )
+
+            Theta_four, names_four, _ = build_fourier_block(
+                ts,
+                k_max=self.config.k_max,
+                include_sin=self.config.include_sin,
+                include_cos=self.config.include_cos,
+                prefix=self.config.fourier_prefix,
+            )
+
+            Theta_full, names_full = combine_libraries(
+                [
+                    (Theta_poly, names_poly),
+                    (Theta_four, names_four),
+                ]
+            )
+            return Theta_full, names_full, powers
+
+        else:
+            raise ValueError(f"Unknown SINDy library mode: {mode}")
+
+    def fit(self, X, Xdot, ts=None):
         """
-        X: (N,d) state snapshots
-        Xdot (N,d) time derivatives
+        X   : (N,d) state snapshots
+        Xdot: (N,d) time derivatives
+        ts  : (N,) or None (required if using time-dependent libraries)
         """
         cfg = self.config
 
-        Theta, names, powers = build_polynomial_block(
-            X,
-            degree=cfg.poly_degree,
-            include_bias=cfg.include_bias,
-            var_names=list(cfg.var_names),
-        )
+        Theta, names, powers = self._build_library(X, ts=ts)
 
-        Xi = stlsq_jit(Theta, Xdot, threshold=cfg.threshold, n_iter=cfg.n_iter)
+        Xi = stlsq_jit(
+            Theta,
+            Xdot,
+            threshold=cfg.threshold,
+            n_iter=cfg.n_iter,
+        )
         Xi = postprocess_Xi(Xi, tol=cfg.post_tol)
 
         self.Xi = Xi
