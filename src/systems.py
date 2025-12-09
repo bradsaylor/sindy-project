@@ -234,3 +234,45 @@ class DuffingDefinition(ProblemDefinition):
         )
 
         return jnp.array([dx, dv])
+
+class DampedOscillatorDefinition(ProblemDefinition):
+    r"""
+    Damped harmonic oscillator in first-order form:
+
+        dx/dt = v
+        dv/dt = -δ v - ω^2 x
+
+    Parameters dict should contain:
+        "delta" : float   # damping
+        "omega" : float   # natural frequency
+    """
+
+    def __init__(
+        self,
+        parameters: dict,
+        x0_vector: jnp.ndarray,
+        t0: float,
+        tf: float,
+        dt: float,
+    ):
+        super().__init__(
+            name="DampedOscillator",
+            state_dim=2,
+            parameters=parameters,
+            x0_vector=x0_vector,
+            t0=t0,
+            tf=tf,
+            dt=dt,
+        )
+
+    def rhs(self, t, x):
+        delta = self.parameters["delta"]
+        omega = self.parameters["omega"]
+
+        x_pos = x[0]
+        v = x[1]
+
+        dx = v
+        dv = -delta * v - (omega**2) * x_pos
+
+        return jnp.array([dx, dv])
