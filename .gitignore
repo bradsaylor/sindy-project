@@ -1,0 +1,79 @@
+# ==========================================
+# Python cache & build artifacts
+# ==========================================
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.dll
+
+# Virtual environments
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.jax_cache/
+.dmypy.json
+
+# ==========================================
+# Jupyter, IPython, notebooks
+# ==========================================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+*.ipynb.tmp
+
+# ==========================================
+# Data, model outputs, batch results
+# ==========================================
+# Do NOT track SINDy batch outputs unless needed
+outputs/
+outputs_*/
+*.npz
+*.npy
+*.csv
+*.pkl
+*.json
+
+# If you want to keep a small example, use:
+# !outputs/example_run.npz
+
+# ==========================================
+# Plots and figures
+# ==========================================
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+
+# Optional: ignore all figures except manually curated ones
+# figures/
+# !figures/keep/
+
+# ==========================================
+# OS files
+# ==========================================
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Logs and misc
+# ==========================================
+*.log
+*.tmp
+*.bak
+
+# ==========================================
+# PyCharm / VSCode / IDE stuff
+# ==========================================
+.idea/
+.vscode/
+*.code-workspace
+
+# ==========================================
+# Build artifacts (if you later add packaging)
+# ==========================================
+build/
+dist/
+*.egg-info/
