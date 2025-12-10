@@ -1,6 +1,4 @@
-Perfect — here’s a **clean, professional, well-structured `README.md`** tailored exactly to your SINDy project architecture, your ME697 expectations, and your current code layout.
-
-This is a **preliminary** version (you can expand later with figures or paper references), but it’s already polished enough for GitHub or grading.
+ **preliminary** version
 
 ---
 
@@ -214,16 +212,3 @@ It demonstrates:
 * Library sensitivity experiments
 * Additional reporting tools
 
----
-
-# ✔ Ready to publish
-
-If you'd like, I can:
-
-* expand this into a more polished academic-style README,
-* add badges (Python version, license, etc.),
-* generate a `requirements.txt`,
-* create a `setup.py` for pip installation,
-* or help you write your project report sections.
-
-Just tell me what you'd like next!
