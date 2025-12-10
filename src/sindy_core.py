@@ -191,13 +191,35 @@ def combine_libraries(blocks):
     return Theta_full, names_full
 
 
-# STLSQ (normalized and JIT-safe)
+# STLSQ (no internal normalization; expects Theta already in working scale)
+
+import jax
+import jax.numpy as jnp
+import numpy as np
 
 
 def _stlsq_core(Theta, Xdot, threshold, n_iter):
     """
     STLSQ on a fixed design matrix Theta (no normalization inside).
-    Uses masking instead of dynamic boolean indexing so it's JIT-safe
+
+    Uses masking instead of dynamic boolean indexing so it's JIT-safe.
+
+    Parameters
+    ----------
+    Theta : array_like, shape (N, p)
+        Design matrix (feature library) in *working scale*.
+        (May be normalized or not — caller decides.)
+    Xdot : array_like, shape (N, d)
+        Time derivatives for each state dimension.
+    threshold : float
+        Sparsity threshold (lambda) in the working scale.
+    n_iter : int
+        Number of sequential thresholding iterations.
+
+    Returns
+    -------
+    Xi : jnp.ndarray, shape (p, d)
+        Coefficient matrix in the same scale as Theta.
     """
     Theta = jnp.asarray(Theta)
     Xdot = jnp.asarray(Xdot)
@@ -206,18 +228,18 @@ def _stlsq_core(Theta, Xdot, threshold, n_iter):
     _, d = Xdot.shape
 
     # Initial least squares
-    Xi, _, _, _ = jnp.linalg.lstsq(Theta, Xdot, rcond=None)  # (p,d)
+    Xi, _, _, _ = jnp.linalg.lstsq(Theta, Xdot, rcond=None)  # (p, d)
 
     for _ in range(n_iter):
-        # threshold small coefficients
-        small = jnp.abs(Xi) < threshold  # (p,d)
-        keep = (~small).astype(Xi.dtype)  # 1 where keey, 0 where drop
+        # threshold small coefficients (in working scale)
+        small = jnp.abs(Xi) < threshold  # (p, d)
+        keep = (~small).astype(Xi.dtype)  # 1 where keep, 0 where drop
         Xi = Xi * keep  # zero-out small entries
 
         # refit each column using only active terms (via masked Theta)
         for j in range(d):
             mask = keep[:, j]  # (p,)
-            Theta_masked = Theta * mask[None, :]  # (N,p)
+            Theta_masked = Theta * mask[None, :]  # (N, p)
             y = Xdot[:, j]  # (N,)
             xi_col, _, _, _ = jnp.linalg.lstsq(Theta_masked, y, rcond=None)
             Xi = Xi.at[:, j].set(xi_col)
@@ -225,32 +247,17 @@ def _stlsq_core(Theta, Xdot, threshold, n_iter):
     return Xi
 
 
-def stlsq_normalized(Theta, Xdot, threshold, n_iter=10):
+# JAX/JIT-safe STLSQ (no internal normalization)
+stlsq_jit = jax.jit(_stlsq_core, static_argnames=("n_iter",))
+
+
+def stlsq_pruned(Theta, Xdot, threshold, n_iter=10):
     """
-    Column-normalized STLSQ (what is actually used)
-    """
-    Theta = jnp.asarray(Theta)
-    Xdot = jnp.asarray(Xdot)
+    Column-pruned STLSQ (Brunton-style) with no internal normalization.
 
-    # column L2 norms
-    col_norms = jnp.linalg.norm(Theta, axis=0)
-    col_norms = jnp.where(col_norms == 0, 1.0, col_norms)
+    Assumes Theta is already in its working scale (possibly normalized by caller).
 
-    Theta_scaled = Theta / col_norms
-
-    Xi_scaled = _stlsq_core(Theta_scaled, Xdot, threshold, n_iter)
-    Xi = Xi_scaled / col_norms[:, None]  # undo scaling
-    return Xi
-
-
-stlsq_jit = jax.jit(stlsq_normalized, static_argnames=("n_iter",))
-
-def stlsq_normalized_pruned(Theta, Xdot, threshold, n_iter=10):
-    """
-    Column-normalized STLSQ with column pruning (Brunton-style).
-
-    - Works in NumPy (no JAX/JIT).
-    - For each state dimension j:
+    For each state dimension j:
         * Fit xi_j via least squares on all columns.
         * Threshold small entries.
         * Refit using only active columns of Theta.
@@ -259,18 +266,18 @@ def stlsq_normalized_pruned(Theta, Xdot, threshold, n_iter=10):
     Parameters
     ----------
     Theta : array_like, shape (N, p)
-        Design matrix (feature library).
+        Design matrix (feature library) in *working scale*.
     Xdot : array_like, shape (N, d)
         Time derivatives for each state dimension.
     threshold : float
-        Sparsity threshold (lambda) in the normalized space.
+        Sparsity threshold (lambda) in the working scale.
     n_iter : int
         Number of sequential thresholding iterations.
 
     Returns
     -------
     Xi : np.ndarray, shape (p, d)
-        Sparse coefficient matrix, un-normalized.
+        Coefficient matrix in the same scale as Theta.
     """
     Theta = np.asarray(Theta)
     Xdot = np.asarray(Xdot)
@@ -278,26 +285,19 @@ def stlsq_normalized_pruned(Theta, Xdot, threshold, n_iter=10):
     N, p = Theta.shape
     _, d = Xdot.shape
 
-    # Column L2 norms for normalization
-    col_norms = np.linalg.norm(Theta, axis=0)
-    col_norms[col_norms == 0] = 1.0  # avoid divide-by-zero
-
-    Theta_scaled = Theta / col_norms  # (N, p)
-
-    Xi_scaled = np.zeros((p, d), dtype=float)
+    Xi = np.zeros((p, d), dtype=float)
 
     for j in range(d):
         y = Xdot[:, j]  # (N,)
 
-        # Initial least squares for this state dimension in normalized space
-        xi_j, _, _, _ = np.linalg.lstsq(Theta_scaled, y, rcond=None)  # (p,)
+        # Initial least squares for this state dimension
+        xi_j, _, _, _ = np.linalg.lstsq(Theta, y, rcond=None)  # (p,)
 
         for _ in range(n_iter):
             # Threshold small coefficients
             small = np.abs(xi_j) < threshold
             big = ~small
 
-            # If nothing is active, we're done
             if not np.any(big):
                 xi_j[:] = 0.0
                 break
@@ -305,19 +305,16 @@ def stlsq_normalized_pruned(Theta, Xdot, threshold, n_iter=10):
             # Zero-out small entries
             xi_j[small] = 0.0
 
-            # Refit only on active columns (still in normalized space)
-            Theta_active = Theta_scaled[:, big]  # (N, k) with k <= p
-            xi_active, _, _, _ = np.linalg.lstsq(Theta_active, y, rcond=None)  # (k,)
+            # Refit only on active columns
+            Theta_active = Theta[:, big]  # (N, k) with k <= p
+            xi_active, _, _, _ = np.linalg.lstsq(Theta_active, y, rcond=None)
 
             # Write back into full vector
             xi_j[big] = xi_active
 
-        Xi_scaled[:, j] = xi_j
+        Xi[:, j] = xi_j
 
-    # Undo column scaling to return to original space
-    Xi = Xi_scaled / col_norms[:, None]
     return Xi
-
 
 
 # Postprocessing + pretty print
@@ -384,6 +381,12 @@ class SINDyConfig:
     post_tol: float = 1e-2  # zero coefficients smaller than this for display
     var_names: Sequence[str] = ("x", "y", "z")
 
+    # ----- NEW -----
+    # If True: column-normalize the feature matrix Θ before STLSQ,
+    #          then unscale Xi afterwards.
+    # If False: run STLSQ directly on unnormalized Θ (PySINDy default behavior).
+    normalize: bool = True
+
     # Fourier options
     mode: str = (
         "polynomial"  # 'polynomial', 'fourier', 'polynomial_and_fourier'
@@ -394,8 +397,9 @@ class SINDyConfig:
     fourier_prefix: str = "t"  # label for time variable in feature names
 
     # STLSQ backend selection
-    stlsq_mode: str = "jit"  # "jit" (default JAX) or "pruned" (NumPy, column pruning)
-
+    stlsq_mode: str = (
+        "jit"  # "jit" (default JAX) or "pruned" (NumPy, column pruning)
+    )
 
 
 class SINDyModel:
@@ -477,39 +481,48 @@ class SINDyModel:
         """
         cfg = self.config
 
-        # Build feature library
+        # 1) Build feature library
         Theta, names, powers = self._build_library(X, ts=ts)
 
-        # ----- choose STLSQ backend -----
+        # 2) Optional column normalization (Θ -> Θ_work)
+        Theta_work, col_norms = self._normalize_features(Theta, cfg.normalize)
+
+        # 3) Choose STLSQ backend on the working matrix
         if cfg.stlsq_mode == "jit":
-            # JAX / JIT-safe masked STLSQ (existing implementation)
-            Xi_raw = stlsq_jit(
-                Theta,
+            Xi_work = stlsq_jit(
+                Theta_work,
                 Xdot,
                 threshold=cfg.threshold,
                 n_iter=cfg.n_iter,
             )
         elif cfg.stlsq_mode == "pruned":
-            # NumPy, Brunton-style column-pruned STLSQ
-            Xi_raw = stlsq_normalized_pruned(
-                Theta,
-                Xdot,
+            Xi_work = stlsq_pruned(
+                np.asarray(Theta_work),
+                np.asarray(Xdot),
                 threshold=cfg.threshold,
                 n_iter=cfg.n_iter,
             )
         else:
             raise ValueError(f"Unknown stlsq_mode: {cfg.stlsq_mode}")
 
-        # Postprocess: zero out tiny coefficients and convert to JAX array
+        # --- NEW: ensure JAX array and unscale with correct broadcasting ---
+        Xi_work = jnp.asarray(Xi_work)
+
+        # Θ_work = Θ / col_norms  =>  Xi_original = Xi_work / col_norms
+        # col_norms: (p,)  ->  need (p,1) to divide rows
+        Xi_raw = Xi_work / col_norms[:, None]
+
+        # 5) Postprocess: zero out tiny coefficients in ORIGINAL scale
         Xi = postprocess_Xi(Xi_raw, tol=cfg.post_tol)
 
-        # Store results
+        # 6) Store results + metadata
         self.Xi = Xi
         self.feature_names = names
         self.powers = powers
         self.Theta_shape = Theta.shape
+        self.Theta_col_norms = col_norms
+        self.normalized = cfg.normalize
         return self
-
 
     def rhs(self, X, ts=None):
         """Evaluate learned RHS at one or more points.
@@ -555,6 +568,30 @@ class SINDyModel:
         Theta, _, _ = self._build_library(X, ts=ts_arr)
         return Theta @ self.Xi
 
+    @staticmethod
+    def _normalize_features(Theta: jnp.ndarray, normalize: bool):
+        """
+        Optionally column-normalize the feature matrix Θ.
+
+        Returns
+        -------
+        Theta_work : jnp.ndarray
+            Matrix passed to STLSQ (normalized or raw).
+        col_norms : jnp.ndarray, shape (p,)
+            L2 norm of each column. If normalize=False, this is all ones.
+        """
+        if not normalize:
+            p = Theta.shape[1]
+            col_norms = jnp.ones((p,))
+            return Theta, col_norms
+
+        # L2 norm of each column
+        col_norms = jnp.linalg.norm(Theta, axis=0)
+        # Avoid division by zero (columns that are identically zero)
+        col_norms_safe = jnp.where(col_norms == 0.0, 1.0, col_norms)
+
+        Theta_work = Theta / col_norms_safe
+        return Theta_work, col_norms_safe
 
     def simulate(self, x0, ts, method="rk4"):
         """
@@ -620,7 +657,6 @@ class SINDyModel:
                 k3 = rhs_numpy(xk + 0.5 * dt * k2, tk + 0.5 * dt)
                 k4 = rhs_numpy(xk + dt * k3, tk + dt)
                 xs[k + 1] = xk + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-
 
         else:
             raise ValueError("method must be 'euler' or 'rk4'.")
