@@ -415,28 +415,50 @@ class SINDyModel:
         self.Theta_shape = Theta.shape
         return self
 
-    def rhs(self, X):
-        """
-        Evaluate learned RHS at one or more points
+    def rhs(self, X, ts=None):
+        """Evaluate learned RHS at one or more points.
 
-        X: (d,) or (N,d)
-        returns: (d,) or (N,d)
+        Parameters
+        ----------
+        X : array_like, shape (d,) or (N, d)
+            State(s) at which to evaluate the RHS.
+        ts : float or array_like, optional
+            Time(s) corresponding to each row of ``X``. This is required
+            when the configured library mode uses Fourier features
+            (``mode == 'fourier'`` or ``mode == 'polynomial_and_fourier'``).
+            For ``mode == 'polynomial'``, this argument is ignored.
+
+        Returns
+        -------
+        Xdot : jnp.ndarray
+            Array of the same leading dimension as ``X`` containing the
+            time derivative(s) at the given state(s).
         """
         if self.Xi is None:
             raise RuntimeError("Call .fit() before .rhs()")
 
-        cfg = self.config
         X = jnp.asarray(X)
         if X.ndim == 1:
             X = X[None, :]
 
-        Theta, _, _ = build_polynomial_block(
-            X,
-            degree=cfg.poly_degree,
-            include_bias=cfg.include_bias,
-            var_names=list(cfg.var_names),
-        )
+        # Handle time input: allow scalar or 1D array matching X rows
+        if ts is not None:
+            ts_arr = jnp.asarray(ts)
+            if ts_arr.ndim == 0:
+                ts_arr = ts_arr[None]
+            if ts_arr.ndim != 1:
+                raise ValueError("ts must be a scalar or 1D array.")
+            if ts_arr.shape[0] != X.shape[0]:
+                raise ValueError(
+                    f"ts must have same length as rows of X; "
+                    f"got len(ts)={ts_arr.shape[0]}, X.shape[0]={X.shape[0]}."
+                )
+        else:
+            ts_arr = None
+
+        Theta, _, _ = self._build_library(X, ts=ts_arr)
         return Theta @ self.Xi
+
 
     def simulate(self, x0, ts, method="rk4"):
         """
@@ -477,28 +499,32 @@ class SINDyModel:
         xs = np.zeros((N, d), dtype=float)
         xs[0] = x0
 
-        def rhs_numpy(x):
-            # Reuse existing JAX-based rhs, but convert in/out via NumPy
+        def rhs_numpy(x, t_now):
+            # Reuse existing JAX-based rhs, but convert in/out via NumPy.
             x_jax = jnp.asarray(x)
-            xdot = self.rhs(x_jax)[0]  # rhs returns shape (1, d) for 1D input
+            t_jax = jnp.asarray(t_now)
+            xdot = self.rhs(x_jax, ts=t_jax)[0]  # rhs returns shape (1, d)
             return np.asarray(xdot, dtype=float)
 
         if method == "euler":
             for k in range(N - 1):
                 dt = dts[k]
                 xk = xs[k]
-                k1 = rhs_numpy(xk)
+                tk = t[k]
+                k1 = rhs_numpy(xk, tk)
                 xs[k + 1] = xk + dt * k1
 
         elif method == "rk4":
             for k in range(N - 1):
                 dt = dts[k]
                 xk = xs[k]
-                k1 = rhs_numpy(xk)
-                k2 = rhs_numpy(xk + 0.5 * dt * k1)
-                k3 = rhs_numpy(xk + 0.5 * dt * k2)
-                k4 = rhs_numpy(xk + dt * k3)
+                tk = t[k]
+                k1 = rhs_numpy(xk, tk)
+                k2 = rhs_numpy(xk + 0.5 * dt * k1, tk + 0.5 * dt)
+                k3 = rhs_numpy(xk + 0.5 * dt * k2, tk + 0.5 * dt)
+                k4 = rhs_numpy(xk + dt * k3, tk + dt)
                 xs[k + 1] = xk + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
 
         else:
             raise ValueError("method must be 'euler' or 'rk4'.")
