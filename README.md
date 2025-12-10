@@ -2,7 +2,7 @@
 
 ---
 
-# 📘 **SINDy Project — Sparse Identification of Nonlinear Dynamics**
+# **SINDy Project — Sparse Identification of Nonlinear Dynamics**
 
 ### *ME 69700 — Advanced Scientific Machine Learning (Purdue University)*
 
@@ -25,7 +25,7 @@ This code supports all four systems used in the ME697 final project:
 
 ---
 
-## 🔧 **Project Structure**
+## **Project Structure**
 
 ```
 sindy-project/
@@ -53,7 +53,7 @@ sindy-project/
 
 ---
 
-## 🚀 **How to Run a Single SINDy Experiment**
+## **How to Run a Single SINDy Experiment**
 
 Example: Duffing oscillator.
 
@@ -102,7 +102,7 @@ This produces:
 
 ---
 
-## 🧪 **Batch Experiments**
+## **Batch Experiments**
 
 To automatically run **all derivative methods** × **all noise levels**:
 
@@ -129,7 +129,7 @@ and corresponding figures.
 
 ---
 
-## 🧠 **STLSQ Options (Sparse Regression)**
+## **STLSQ Options (Sparse Regression)**
 
 This project includes **two** implementations:
 
@@ -151,7 +151,7 @@ Both implementations produce **identical models** for Lorenz and Duffing when th
 
 ---
 
-## 📏 **Normalization vs. PySINDy Differences**
+## **Normalization vs. PySINDy Differences**
 
 A key insight from this project:
 
@@ -163,7 +163,7 @@ This is discussed extensively in the project report.
 
 ---
 
-## 📄 **Dependencies**
+## **Dependencies**
 
 Recommended environment:
 
@@ -186,7 +186,7 @@ pip install jax diffrax numpy scipy matplotlib pysindy
 
 ---
 
-## 👨‍🏫 **Course Context**
+## **Course Context**
 
 This repository contains the complete implementation for the final project in:
 
@@ -205,7 +205,7 @@ It demonstrates:
 
 ---
 
-## 🔮 **Planned Features**
+## **Planned Features**
 
 * Config switch: `normalize=True/False`
 * λ-sweeping automation (threshold tuning)
