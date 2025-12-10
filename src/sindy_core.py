@@ -245,6 +245,80 @@ def stlsq_normalized(Theta, Xdot, threshold, n_iter=10):
 
 stlsq_jit = jax.jit(stlsq_normalized, static_argnames=("n_iter",))
 
+def stlsq_normalized_pruned(Theta, Xdot, threshold, n_iter=10):
+    """
+    Column-normalized STLSQ with column pruning (Brunton-style).
+
+    - Works in NumPy (no JAX/JIT).
+    - For each state dimension j:
+        * Fit xi_j via least squares on all columns.
+        * Threshold small entries.
+        * Refit using only active columns of Theta.
+      Repeat for `n_iter` iterations.
+
+    Parameters
+    ----------
+    Theta : array_like, shape (N, p)
+        Design matrix (feature library).
+    Xdot : array_like, shape (N, d)
+        Time derivatives for each state dimension.
+    threshold : float
+        Sparsity threshold (lambda) in the normalized space.
+    n_iter : int
+        Number of sequential thresholding iterations.
+
+    Returns
+    -------
+    Xi : np.ndarray, shape (p, d)
+        Sparse coefficient matrix, un-normalized.
+    """
+    Theta = np.asarray(Theta)
+    Xdot = np.asarray(Xdot)
+
+    N, p = Theta.shape
+    _, d = Xdot.shape
+
+    # Column L2 norms for normalization
+    col_norms = np.linalg.norm(Theta, axis=0)
+    col_norms[col_norms == 0] = 1.0  # avoid divide-by-zero
+
+    Theta_scaled = Theta / col_norms  # (N, p)
+
+    Xi_scaled = np.zeros((p, d), dtype=float)
+
+    for j in range(d):
+        y = Xdot[:, j]  # (N,)
+
+        # Initial least squares for this state dimension in normalized space
+        xi_j, _, _, _ = np.linalg.lstsq(Theta_scaled, y, rcond=None)  # (p,)
+
+        for _ in range(n_iter):
+            # Threshold small coefficients
+            small = np.abs(xi_j) < threshold
+            big = ~small
+
+            # If nothing is active, we're done
+            if not np.any(big):
+                xi_j[:] = 0.0
+                break
+
+            # Zero-out small entries
+            xi_j[small] = 0.0
+
+            # Refit only on active columns (still in normalized space)
+            Theta_active = Theta_scaled[:, big]  # (N, k) with k <= p
+            xi_active, _, _, _ = np.linalg.lstsq(Theta_active, y, rcond=None)  # (k,)
+
+            # Write back into full vector
+            xi_j[big] = xi_active
+
+        Xi_scaled[:, j] = xi_j
+
+    # Undo column scaling to return to original space
+    Xi = Xi_scaled / col_norms[:, None]
+    return Xi
+
+
 
 # Postprocessing + pretty print
 
@@ -318,6 +392,10 @@ class SINDyConfig:
     include_sin: bool = True
     include_cos: bool = True
     fourier_prefix: str = "t"  # label for time variable in feature names
+
+    # STLSQ backend selection
+    stlsq_mode: str = "jit"  # "jit" (default JAX) or "pruned" (NumPy, column pruning)
+
 
 
 class SINDyModel:
@@ -399,21 +477,39 @@ class SINDyModel:
         """
         cfg = self.config
 
+        # Build feature library
         Theta, names, powers = self._build_library(X, ts=ts)
 
-        Xi = stlsq_jit(
-            Theta,
-            Xdot,
-            threshold=cfg.threshold,
-            n_iter=cfg.n_iter,
-        )
-        Xi = postprocess_Xi(Xi, tol=cfg.post_tol)
+        # ----- choose STLSQ backend -----
+        if cfg.stlsq_mode == "jit":
+            # JAX / JIT-safe masked STLSQ (existing implementation)
+            Xi_raw = stlsq_jit(
+                Theta,
+                Xdot,
+                threshold=cfg.threshold,
+                n_iter=cfg.n_iter,
+            )
+        elif cfg.stlsq_mode == "pruned":
+            # NumPy, Brunton-style column-pruned STLSQ
+            Xi_raw = stlsq_normalized_pruned(
+                Theta,
+                Xdot,
+                threshold=cfg.threshold,
+                n_iter=cfg.n_iter,
+            )
+        else:
+            raise ValueError(f"Unknown stlsq_mode: {cfg.stlsq_mode}")
 
+        # Postprocess: zero out tiny coefficients and convert to JAX array
+        Xi = postprocess_Xi(Xi_raw, tol=cfg.post_tol)
+
+        # Store results
         self.Xi = Xi
         self.feature_names = names
         self.powers = powers
         self.Theta_shape = Theta.shape
         return self
+
 
     def rhs(self, X, ts=None):
         """Evaluate learned RHS at one or more points.
