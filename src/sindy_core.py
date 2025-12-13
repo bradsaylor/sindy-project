@@ -381,7 +381,6 @@ class SINDyConfig:
     post_tol: float = 1e-2  # zero coefficients smaller than this for display
     var_names: Sequence[str] = ("x", "y", "z")
 
-    # ----- NEW -----
     # If True: column-normalize the feature matrix Θ before STLSQ,
     #          then unscale Xi afterwards.
     # If False: run STLSQ directly on unnormalized Θ (PySINDy default behavior).
@@ -505,7 +504,7 @@ class SINDyModel:
         else:
             raise ValueError(f"Unknown stlsq_mode: {cfg.stlsq_mode}")
 
-        # --- NEW: ensure JAX array and unscale with correct broadcasting ---
+        # ensure JAX array and unscale with correct broadcasting ---
         Xi_work = jnp.asarray(Xi_work)
 
         # Θ_work = Θ / col_norms  =>  Xi_original = Xi_work / col_norms

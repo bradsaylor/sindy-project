@@ -135,7 +135,7 @@ def true_equations_to_string(problem):
         ]
 
     else:
-        # fallback: we don't know, but at least say so
+        # fallback
         lines = [f"[true equations not implemented for system '{name}']"]
 
     return "\n".join(lines)
@@ -315,7 +315,7 @@ def run_all_for_problem(
 
 
 # ---------------------------------------------------------------------
-# Helpers for loading results and making the "usual" plots
+# Helpers for loading results and making plots
 # ---------------------------------------------------------------------
 
 import numpy as np

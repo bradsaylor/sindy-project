@@ -1,6 +1,3 @@
- **preliminary** version
-
----
 
 # **SINDy Project — Sparse Identification of Nonlinear Dynamics**
 
@@ -18,7 +15,7 @@ This repository contains a full research-grade implementation of the **Sparse Id
 
 This code supports all four systems used in the ME697 final project:
 
-* Lorenz 63
+* Lorenz System
 * Hopf oscillator
 * Duffing oscillator
 * Damped harmonic oscillator (toy example)
@@ -35,8 +32,7 @@ sindy-project/
 │   ├── derivatives.py       # FD, SG, TV derivative estimators
 │   ├── sindy_core.py        # Feature library + STLSQ implementations
 │   ├── plotting.py          # Composite figure + equation print utilities
-│   ├── run_model.py         # Batch runner and single-run pipeline
-│   └── utils.py             # (optional helpers)
+│   └── run_model.py         # Batch runner and single-run pipeline
 │
 ├── notebooks/
 │   ├── 01_lorenz.ipynb

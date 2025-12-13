@@ -102,7 +102,7 @@ def sgolay_derivative(ts, X, window_length=21, polyorder=3):
     return jnp.asarray(Xdot if Xdot.shape[1] > 1 else Xdot[:, 0])
 
 
-# ---------- TV-regularized derivative (Chartrand / TVRegDiff) ----------
+# ---------- TV-regularized derivative ----------
 
 try:
     import scipy.sparse as sp
@@ -181,7 +181,7 @@ def _tvregdiff_1d(
         # gradient of objective
         g = AT(A(u) - data) + alpha * (L @ u)
 
-        # Hessian-like operator
+        # Hessian-like 
         def linop(v):
             return alpha * (L @ v) + AT(A(v))
 
